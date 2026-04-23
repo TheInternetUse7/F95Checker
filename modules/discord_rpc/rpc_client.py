@@ -75,25 +75,34 @@ def disconnect():
     _connected = False
 
 
-def update_presence(title: str, image_url: str = None, state: str = "Playing"):
+def update_presence(
+    title: str,
+    image_url: str = None,
+    details: str = "",
+    state: str = "",
+    start: int | None = None,
+):
     """Update Discord Rich Presence with game info.
 
     Args:
         title: Game name to display
         image_url: URL of game thumbnail (from Litterbox upload)
-        state: Activity state text (default "Playing")
+        details: Secondary detail line text
+        state: Tertiary state line text
+        start: Unix timestamp for the session start
     """
     if not connect():
         return
 
     try:
         kwargs = {
+            "name": title,
+            "details": details,
             "state": state,
-            "details": title,
             "large_image": image_url or "",
             "large_text": title,
-            "start": int(time.time()),
-            "status_display_type": _StatusDisplayType.DETAILS,
+            "start": start or int(time.time()),
+            "status_display_type": _StatusDisplayType.NAME,
         }
         kwargs = {k: v for k, v in kwargs.items() if v}
         _rpc.update(**kwargs)

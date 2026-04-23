@@ -35,6 +35,7 @@ DEFAULT_CLIENT_ID = 1345123985415458858
 _state = _STATE_IDLE
 _current_game_id = None
 _current_game_dir = None
+_current_started_at = None
 _thread = None
 _stop_event = threading.Event()
 _config = dict(_DEFAULT_CONFIG)
@@ -102,9 +103,35 @@ def is_enabled() -> bool:
     return _config.get("discord_rpc_enabled", True)
 
 
+def _normalize_presence_text(value: str) -> str:
+    """Normalize presence text to a compact single-line value."""
+    if not value:
+        return ""
+    return " ".join(str(value).split()).strip()
+
+
+def _build_presence_fields(game) -> tuple[str, str]:
+    """Build concise Discord details/state fields from a Game-like object."""
+    details = _normalize_presence_text(getattr(game, "developer", ""))
+
+    version = _normalize_presence_text(getattr(game, "version", ""))
+    type_name = _normalize_presence_text(getattr(getattr(game, "type", None), "name", ""))
+    status_name = _normalize_presence_text(getattr(getattr(game, "status", None), "name", ""))
+
+    state_parts: list[str] = []
+    if version and version not in {"True", "False"}:
+        state_parts.append(version if version.lower().startswith("v") else f"v{version}")
+    if type_name and type_name not in {"Unchecked"}:
+        state_parts.append(type_name)
+    if status_name and status_name not in {"Normal", "Unchecked"}:
+        state_parts.append(status_name)
+
+    return details, " | ".join(state_parts)
+
+
 def _run():
     """Main loop for the Discord RPC background thread."""
-    global _state, _current_game_id, _current_game_dir
+    global _state, _current_game_id, _current_game_dir, _current_started_at
 
     from modules.discord_rpc import rpc_client, uploader, scanner
 
@@ -123,6 +150,7 @@ def _run():
                     _state = _STATE_IDLE
                     _current_game_id = None
                     _current_game_dir = None
+                    _current_started_at = None
                 _stop_event.wait(_SCAN_INTERVAL)
                 continue
 
@@ -135,6 +163,7 @@ def _run():
                     # New game detected - transition to PLAYING
                     _state = _STATE_PLAYING
                     _current_game_id = matched_game.id
+                    _current_started_at = int(time.time())
 
                     # Determine the game directory for child process tracking
                     if matched_game.executables:
@@ -164,10 +193,13 @@ def _run():
                         log.debug(f"Image upload failed: {e}")
 
                     # Update Discord presence
+                    details, state = _build_presence_fields(matched_game)
                     rpc_client.update_presence(
                         title=matched_game.name,
                         image_url=image_url,
-                        state="Playing",
+                        details=details,
+                        state=state,
+                        start=_current_started_at,
                     )
                 else:
                     # Same game still running - verify process count
@@ -179,6 +211,7 @@ def _run():
                             _state = _STATE_IDLE
                             _current_game_id = None
                             _current_game_dir = None
+                            _current_started_at = None
                             rpc_client.clear_presence()
             else:
                 # No game running
@@ -197,6 +230,7 @@ def _run():
                     _state = _STATE_IDLE
                     _current_game_id = None
                     _current_game_dir = None
+                    _current_started_at = None
                     rpc_client.clear_presence()
 
         except Exception as e:
@@ -225,7 +259,7 @@ def start_background_thread():
 
 def stop():
     """Stop the Discord RPC background thread."""
-    global _thread, _state, _current_game_id, _current_game_dir
+    global _thread, _state, _current_game_id, _current_game_dir, _current_started_at
     _stop_event.set()
     if _thread is not None:
         _thread.join(timeout=10)
@@ -233,6 +267,7 @@ def stop():
     _state = _STATE_IDLE
     _current_game_id = None
     _current_game_dir = None
+    _current_started_at = None
     log.info("Discord RPC stopped")
 
 
