@@ -5201,6 +5201,48 @@ class MainGUI():
 
             imgui.end_table()
 
+        # === CUSTOM RPC UI ===
+        if draw_settings_section("Discord Rich Presence"):
+            from modules.discord_rpc import orchestrator
+            draw_settings_label(
+                "Enable Discord RPC:",
+                "Show the currently played game on your Discord profile via Rich Presence."
+            )
+            imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + checkbox_offset)
+            changed, value = imgui.checkbox("###discord_rpc_enabled", orchestrator.is_enabled())
+            if changed:
+                orchestrator.set_config("discord_rpc_enabled", value)
+
+            draw_settings_label(
+                "Discord App ID:",
+                "Your Discord application ID from discord.com/developers/applications. "
+                "The default is a placeholder that will NOT show on Discord."
+            )
+            client_id = orchestrator.get_config("discord_client_id", "") or str(orchestrator.DEFAULT_CLIENT_ID)
+            imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + checkbox_offset)
+            changed, value = imgui.input_text("###discord_client_id", client_id)
+            if changed and value:
+                orchestrator.set_config("discord_client_id", value)
+
+            draw_settings_label("Clear image cache:")
+            cache_dir = orchestrator.get_cache_path().parent
+            draw_settings_label("Cache location:", str(cache_dir / "rpc_cache.json"))
+            if imgui.button("Clear cache", width=right_width):
+                orchestrator.clear_image_cache()
+                buttons = {
+                    f"{icons.check} OK": None
+                }
+                utils.push_popup(
+                    msgbox.msgbox, "Cache cleared",
+                    "RPC image cache has been cleared.",
+                    MsgBox.info,
+                    buttons
+                )
+
+            imgui.end_table()
+            imgui.spacing()
+        # === END CUSTOM RPC UI ===
+
         if api.downloads:
             imgui.text("\nDonor DDL:\n")
             to_remove = []

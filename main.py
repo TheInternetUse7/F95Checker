@@ -32,6 +32,11 @@ def main():
         from modules import notification_proc, rpc_thread
         with notification_proc.setup(), rpc_thread.setup():
 
+            # --- BEGIN DISCORD RPC ---
+            from modules import discord_rpc
+            discord_rpc.start_background_thread()
+            # --- END DISCORD RPC ---
+
             globals.gui.main_loop()
 
 

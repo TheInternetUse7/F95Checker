@@ -53,3 +53,8 @@ zstd==1.5.6.2
 # Proxy support
 python-socks[asyncio]==2.5.3
 aiohttp-socks==0.9.1
+
+# Discord Rich Presence sidecar
+pypresence==4.6.1
+psutil==6.1.0
+requests==2.32.3
