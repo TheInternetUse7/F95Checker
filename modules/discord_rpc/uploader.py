@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # Litterbox API endpoint for anonymous uploads
 LITTERBOX_UPLOAD_URL = "https://litterbox.catbox.moe/resources/internals/api.php"
 # Duration options: "1h", "12h", "24h", "1w"
-LITTERBOX_EXPIRY = "24h"
+LITTERBOX_EXPIRY = "1w"
 
 # VNDB API endpoint
 VNDB_API_URL = "https://api.vndb.org/kana/vn"
@@ -39,6 +39,7 @@ _REQUEST_HEADERS = {
     "User-Agent": "F95Checker Discord RPC",
 }
 _CONTENT_TYPE_EXTS = {
+    "image/avif": ".avif",
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
@@ -240,7 +241,7 @@ def _normalize_dims(value) -> list[int]:
 def _find_local_image_path(game_id: int) -> pathlib.Path | None:
     from modules import globals
 
-    for ext in ("png", "jpg", "jpeg", "gif", "webp"):
+    for ext in ("png", "jpg", "jpeg", "gif", "webp", "avif"):
         candidate = globals.images_path / f"{game_id}.{ext}"
         if candidate.is_file():
             return candidate
