@@ -156,7 +156,7 @@ def check_error(
             logger.error("Hit F95zone Forum ratelimit")
             return ERROR_F95ZONE_RATELIMIT
 
-        if any((msg in res) for msg in TEMP_ERROR_MESSAGES):
+        if any((msg in res) for msg in TEMP_ERROR_MESSAGES) or not res:
             logger.warning("F95zone temporarily unreachable")
             return ERROR_F95ZONE_UNAVAILABLE
 

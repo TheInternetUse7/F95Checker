@@ -7,11 +7,13 @@ import io
 import json
 import os
 import pathlib
+import platform
 import re
 import shlex
 import shutil
 import socket
 import ssl
+import stat
 import sys
 import tempfile
 import time
@@ -335,7 +337,7 @@ def raise_f95zone_error(res: bytes | dict, return_login=False):
                 "please try again later.",
                 MsgBox.warn
             )
-        if any(msg in res for msg in f95_temp_error_messages):
+        if any(msg in res for msg in f95_temp_error_messages) or not res:
             raise msgbox.Exc(
                 "Server downtime",
                 "F95zone servers are currently unreachable,\n"
@@ -798,8 +800,16 @@ async def fast_check(games: list[Game], full=False):
     for game in games:
         last_changed = last_changes.get(str(game.id), 0)
         assert last_changed > 0, "Invalid last_changed from fast check API"
+        check_new_enums = False
+        if globals.version != game.last_check_version:
+            check_new_enums = (
+                Tag.unknown in game.tags or
+                game.type is Type.Unknown or
+                game.status is Status.Unknown
+            )
 
         this_full = full or (
+            check_new_enums or
             game.status is Status.Unchecked or
             last_changed > game.last_full_check or
             (game.image.missing and (game.image_url.startswith("http") or not game.image_url)) or
@@ -853,15 +863,27 @@ async def full_check(game: Game, last_changed: int):
             url = f95_threads_page + str(game.id)
 
         # Redis only allows string values, so API only gives str for simplicity
-        thread["type"] = Type(int(thread["type"]))
-        thread["status"] = Status(int(thread["status"]))
+        try:
+            thread["type"] = Type(int(thread["type"]))
+        except ValueError:
+            thread["type"] = Type.Unknown
+        try:
+            thread["status"] = Status(int(thread["status"]))
+        except ValueError:
+            thread["status"] = Status.Unknown
         thread["last_updated"] = int(thread["last_updated"])
         thread["score"] = float(thread["score"])
         thread["votes"] = int(thread["votes"])
-        thread["tags"] = tuple(Tag(tag) for tag in json.loads(thread["tags"]))
+        thread["tags"] = json.loads(thread["tags"])
+        for i in range(len(thread["tags"])):
+            try:
+                thread["tags"][i] = Tag(thread["tags"][i])
+            except ValueError:
+                thread["tags"][i] = Tag.unknown
+        thread["tags"] = tuple(thread["tags"])
         thread["unknown_tags"] = json.loads(thread["unknown_tags"])
         thread["downloads"] = json.loads(thread["downloads"])
-        for label, links in thread["downloads"]:
+        for _, links in thread["downloads"]:
             for link_i, link_pair in enumerate(links):
                 links[link_i] = tuple(link_pair)
         thread["previews_urls"] = json.loads(thread.get("previews_urls", "[]"))
@@ -1142,6 +1164,8 @@ async def check_updates():
         asset_name = None
         asset_size = None
         asset_type = globals.os.name.lower() if globals.frozen else "source"
+        if globals.frozen and globals.os is Os.MacOS:
+            asset_type += "-arm64" if platform.machine().lower() == "arm64" else "-x64"
         for asset in res["assets"]:
             if asset_type in asset["name"].lower():
                 asset_url = asset["browser_download_url"]
@@ -1220,9 +1244,17 @@ async def check_updates():
                 if cancel:
                     shutil.rmtree(asset_path, ignore_errors=True)
                     return
-                extracted = z.extract(file, asset_path)
-                if (attr := file.external_attr >> 16) != 0:
-                    os.chmod(extracted, attr)
+                mode = file.external_attr >> 16
+                if (mode & stat.S_IFLNK) == stat.S_IFLNK:
+                    extracted = asset_path / file.filename
+                    symlink = z.read(file).decode()
+                    os.symlink(symlink, extracted)
+                    if hasattr(os, "lchmod"):
+                        os.lchmod(extracted, mode)
+                else:
+                    extracted = z.extract(file, asset_path)
+                    if mode != 0:
+                        os.chmod(extracted, mode)
                 progress += 1
         progress = 5.0
         total = 5.0
@@ -1241,33 +1273,27 @@ async def check_updates():
             dst = globals.self_path.parent.parent.absolute()  # F95Checker.app/Contents/MacOS
         pid = os.getpid()
         if globals.os is Os.Windows:
-            script = "\n".join((
-                "try {"
-                'Write-Host "Waiting for F95Checker to quit..."',
-                f"Wait-Process -Id {pid}",
-                'Write-Host "Sleeping 3 seconds..."',
-                "Start-Sleep -Seconds 3",
-                'Write-Host "Deleting old version files..."',
-                " | ".join((
-                    f'Get-ChildItem -Force -Recurse -Path "{dst}"',
-                    "Select-Object -ExpandProperty FullName",
-                    "Sort-Object -Property Length -Descending",
-                    "Remove-Item -Force -Recurse",
-                )),
-                'Write-Host "Moving new version files..."',
-                " | ".join((
-                    f'Get-ChildItem -Force -Path "{src}"',
-                    "Select-Object -ExpandProperty FullName",
-                    f'Move-Item -Force -Destination "{dst}"',
-                )),
-                'Write-Host "Sleeping 3 seconds..."',
-                "Start-Sleep -Seconds 3",
-                'Write-Host "Starting F95Checker..."',
-                f"& {globals.start_cmd}",
-                "} catch {",
-                'Write-Host "An error occurred:`n" $_.InvocationInfo.PositionMessage "`n" $_',
-                "}",
-            ))
+            script = f"""\
+try {{
+    Write-Host "Waiting for F95Checker to quit..."
+    try {{
+        Wait-Process -Id {pid}
+    }} catch {{
+        Write-Host "F95Checker seems to have already quit"
+    }}
+    Write-Host "Sleeping 3 seconds..."
+    Start-Sleep -Seconds 3
+    Write-Host "Deleting old version files..."
+    Get-ChildItem -Force -Recurse -Path "{dst}" | Select-Object -ExpandProperty FullName | Sort-Object -Property Length -Descending | Remove-Item -Force -Recurse
+    Write-Host "Moving new version files..."
+    Get-ChildItem -Force -Path "{src}" | Select-Object -ExpandProperty FullName | Move-Item -Force -Destination "{dst}"
+    Write-Host "Sleeping 3 seconds..."
+    Start-Sleep -Seconds 3
+    Write-Host "Starting F95Checker..."
+    & {globals.start_cmd}
+}} catch {{
+    Write-Host "An error occurred:`n" $_.InvocationInfo.PositionMessage "`n" $_
+}}"""
             shell = [shutil.which("powershell")]
         else:
             for item in dst.iterdir():
@@ -1390,6 +1416,7 @@ async def download_file(download: FileDownload):
         download.path.parent.mkdir(parents=True, exist_ok=True)
         async with aiofiles.open(download.path, "wb") as file:
             download.state = download.State.Downloading
+            download.start = time.time()
 
             can_resume = None
             while True:
@@ -1417,6 +1444,7 @@ async def download_file(download: FileDownload):
                                 return
                             if chunk:
                                 download.progress += await file.write(chunk)
+                                download.current = time.time()
                     except aiohttp.ClientPayloadError as exc:
                         if "ContentLengthError" in str(exc):
                             continue
@@ -1609,7 +1637,7 @@ def open_ddl_popup(game: Game):
                     if already_downloading:
                         imgui.pop_disabled()
                         globals.gui.draw_hover_text(
-                            "This file is already downloading in F95Checker.\n"
+                            "This file is currently downloading in F95Checker.\n"
                             "You can find it in the sidebar, below the settings.",
                             text=None,
                         )

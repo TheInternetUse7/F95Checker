@@ -19,6 +19,14 @@ var rpcCall = async (method, path, body) => {
         const res = await (new Promise((resolve) => {
             new QWebChannel(qt.webChannelTransport, (channel) => {
                 channel.objects.rpcproxy.handle(method, path, body, (ret) => {
+                    if (!ret.status) {
+                        if (path === "/games/add") {
+                          alert(
+                              'Could not connect to F95Checker!\nIs it open and updated? Is RPC enabled?'
+                          );
+                        }
+                        throw new Error("Could not connect to F95Checker");
+                    }
                     resolve(new Response(atob(ret.body), ret));
                 });
             });

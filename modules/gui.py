@@ -636,27 +636,28 @@ class MainGUI():
         _ = \
             imgui.style.colors[imgui.COLOR_TEXT_DISABLED] = \
         globals.settings.style_text_dim
-        self.qt_app.setStyleSheet(f"""
-            QMenu {{
-                padding: 5px;
-                background-color: {colors.rgba_0_1_to_hex(globals.settings.style_bg)[:-2]};
-            }}
-            QMenu::item {{
-                margin: 1px;
-                padding: 2px 7px 2px 7px;
-                border-radius: {globals.settings.style_corner_radius};
-                color: {colors.rgba_0_1_to_hex(globals.settings.style_text)[:-2]};
-            }}
-            QMenu::item:disabled {{
-                color: {colors.rgba_0_1_to_hex(globals.settings.style_text_dim)[:-2]};
-            }}
-            QMenu::item:selected:enabled {{
-                background-color: {colors.rgba_0_1_to_hex(globals.settings.style_accent)[:-2]};
-            }}
-            QMenu::icon {{
-                padding-left: 7px;
-            }}
-        """)
+        if globals.os is not Os.MacOS:
+            self.qt_app.setStyleSheet(f"""
+                QMenu {{
+                    padding: 5px;
+                    background-color: {colors.rgba_0_1_to_hex(globals.settings.style_bg)[:-2]};
+                }}
+                QMenu::item {{
+                    margin: 1px;
+                    padding: 2px 7px 2px 7px;
+                    border-radius: {globals.settings.style_corner_radius};
+                    color: {colors.rgba_0_1_to_hex(globals.settings.style_text)[:-2]};
+                }}
+                QMenu::item:disabled {{
+                    color: {colors.rgba_0_1_to_hex(globals.settings.style_text_dim)[:-2]};
+                }}
+                QMenu::item:selected:enabled {{
+                    background-color: {colors.rgba_0_1_to_hex(globals.settings.style_accent)[:-2]};
+                }}
+                QMenu::icon {{
+                    padding-left: 7px;
+                }}
+            """)
 
     def refresh_fonts(self):
         imgui.io.fonts.clear()
@@ -900,7 +901,6 @@ class MainGUI():
                         or (imagehelper.redraw and globals.settings.play_gifs and (self.focused or globals.settings.play_gifs_unfocused))
                         or imgui.io.mouse_wheel or self.input_chars or any(imgui.io.mouse_down) or any(imgui.io.keys_down)
                         or (prev_mouse_pos != mouse_pos and (prev_win_hovered or win_hovered))
-                        or (self.focused or globals.settings.render_when_unfocused)
                         or imagehelper.apply_queue or imagehelper.unload_queue
                         or prev_scaling != globals.settings.interface_scaling
                         or prev_minimized != self.minimized
@@ -1030,7 +1030,7 @@ class MainGUI():
                                     utils.start_refresh_task(api.refresh())
                             first_frame = False
                     else:  # Visible but not drawing
-                        time.sleep(1 / 15)
+                        glfw.wait_events_timeout(1 / 15)
                 else:  # Not visible
                     # Unload images if necessary
                     imagehelper.post_draw(0)
@@ -2138,11 +2138,12 @@ class MainGUI():
     def draw_game_info_popup(self, game: Game, carousel_ids: list = None, popup_uuid: str = ""):
         def popup_content():
             # Image
+            imgui.indent(imgui.style.scrollbar_size)
             image = game.image
             avail = imgui.get_content_region_available()
-            if imgui.get_scroll_max_y() > 0.0:
+            if imgui.get_scroll_max_y() <= 0.0:
                 # Avoid shifing content with/without scroll bar
-                avail = avail._replace(x=avail.x + imgui.style.scrollbar_size)
+                avail = avail._replace(x=avail.x - imgui.style.scrollbar_size)
             close_image = False
             zoom_popup = False
             out_height = (min(avail.y, self.scaled(690)) * self.scaled(0.4)) or 1
@@ -2229,6 +2230,7 @@ class MainGUI():
                 imgui.end_child()
                 imgui.set_cursor_pos(prev_pos)
                 imgui.dummy(out_width, out_height)
+            imgui.unindent(imgui.style.scrollbar_size)
             imgui.push_text_wrap_pos()
 
             imgui.push_font(imgui.fonts.big)
@@ -4015,6 +4017,9 @@ class MainGUI():
                         if imgui.selectable(f"{icons.reload_alert} Full Refresh (incl. everything)", False)[0]:
                             utils.start_refresh_task(api.refresh(full=True, force_archived=True, force_completed=True))
                 imgui.separator()
+                if imgui.selectable(f"{icons.monitor_arrow_down_variant} Check for app updates", False)[0]:
+                    utils.start_update_check()
+                imgui.separator()
                 if imgui.selectable(f"{icons.information_outline} More info", False)[0]:
                     utils.push_popup(
                         msgbox.msgbox, "About refreshing",
@@ -4638,16 +4643,6 @@ class MainGUI():
                 glfw.swap_interval(set.vsync_ratio)
                 async_thread.run(db.update_settings("vsync_ratio"))
 
-            draw_settings_label(
-                "Render if unfocused:",
-                "F95Checker renders its interface using ImGui and OpenGL and this means it has to render the whole interface up "
-                "to hundreds of times per second (look at the framerate below). This process is as optimized as possible but it "
-                "will inevitably consume some CPU and GPU resources. If you absolutely need the performance you can disable this "
-                "option to stop rendering when the checker window is not focused, but keep in mind that it might lead to weird "
-                "interactions and behavior."
-            )
-            draw_settings_checkbox("render_when_unfocused")
-
             draw_settings_label(f"Current framerate: {round(imgui.io.framerate, 3)}")
             imgui.text("")
             imgui.spacing()
@@ -4686,7 +4681,14 @@ class MainGUI():
 
             draw_settings_label("New label:")
             if imgui.button("Add", width=right_width):
-                async_thread.run(db.create_label())
+                if len(Label.instances) == 63:
+                    utils.push_popup(
+                        msgbox.msgbox, "Alert!",
+                        "You have reached the maximum number (63) of labels.",
+                        MsgBox.warn
+                    )
+                else:
+                    async_thread.run(db.create_label())
 
             imgui.end_table()
             imgui.spacing()
@@ -5290,11 +5292,13 @@ class MainGUI():
                     space_after = 0
 
                 ratio = download.progress / (download.total or 1)
+                downd = download.progress
+                speed = downd / ((download.current - download.start) or 1)
                 width = imgui.get_content_region_available_width() - space_after
                 height = imgui.get_frame_height()
                 imgui.progress_bar(ratio, (width, height))
                 if download.state == download.State.Downloading:
-                    text = f"{ratio:.0%}"
+                    text = f"{utils.sizeof_fmt(downd):>7} {min(ratio, 99):>3.0%} ({utils.sizeof_fmt(speed):>7}/s)"
                 elif download.state == download.State.Stopped:
                     if not errored:
                         text = "Done!"
@@ -5314,6 +5318,7 @@ class MainGUI():
                 else:
                     text = f"{download.state.name}..."
                 imgui.same_line()
+                imgui.push_font(imgui.fonts.mono_sm)
                 draw_list = imgui.get_window_draw_list()
                 col = imgui.get_color_u32_rgba(1, 1, 1, 1)
                 text_size = imgui.calc_text_size(text)
@@ -5321,6 +5326,7 @@ class MainGUI():
                 text_x = screen_pos.x - (width + text_size.x) / 2 - imgui.style.item_spacing.x
                 text_y = screen_pos.y + (height - text_size.y) / 2
                 draw_list.add_text(text_x, text_y, col, text)
+                imgui.pop_font()
 
                 if download.state == download.State.Downloading:
                     if was_canceling := download.cancel:
@@ -5387,7 +5393,8 @@ class TrayIcon(QtWidgets.QSystemTrayIcon):
         self.menu.addAction(self.toggle_pause)
         self.menu.addAction(self.toggle_gui)
         self.menu.addAction(self.quit)
-        self.setContextMenu(self.menu)
+        if globals.os is not Os.MacOS:
+            self.setContextMenu(self.menu)
         self.menu_open = False
         self.menu.aboutToShow.connect(self.showing_menu)
         self.menu.aboutToHide.connect(self.hiding_menu)
@@ -5457,5 +5464,7 @@ class TrayIcon(QtWidgets.QSystemTrayIcon):
         self.update_icon()
 
     def activated_filter(self, reason: QtWidgets.QSystemTrayIcon.ActivationReason):
-        if reason in self.show_gui_events:
+        if globals.os is Os.MacOS and reason == QtWidgets.QSystemTrayIcon.ActivationReason.Context:
+            self.menu.popup(QtGui.QCursor.pos())
+        elif reason in self.show_gui_events:
             self.main_gui.show()

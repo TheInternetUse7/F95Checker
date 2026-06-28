@@ -10,8 +10,6 @@ from PyQt6 import (
     QtGui,
     QtNetwork,
     QtWebChannel,
-    QtWebEngineCore,
-    QtWebEngineWidgets,
     QtWidgets,
 )
 from PyQt6.QtNetwork import QNetworkProxy
@@ -154,6 +152,11 @@ def create(
             proxy.setPassword(proxy_config["password"])
         QNetworkProxy.setApplicationProxy(proxy)
 
+    from PyQt6 import (
+        QtWebEngineCore,
+        QtWebEngineWidgets,
+    )
+
     app = QtWidgets.QApplication(sys.argv)
     app.pipe = ChildPipe()
     icon_font = QtGui.QFontDatabase.applicationFontFamilies(QtGui.QFontDatabase.addApplicationFont(icon_font))[0]
@@ -246,8 +249,11 @@ def create(
                     body = body.encode()
                 from common import meta
                 async def _handle():
-                    async with self.session.request(method, meta.rpc_url + path, data=body) as req:
-                        return {"status": req.status, "body": base64.b64encode(await req.read()).decode()}
+                    try:
+                        async with self.session.request(method, meta.rpc_url + path, data=body) as req:
+                            return {"status": req.status, "body": base64.b64encode(await req.read()).decode()}
+                    except aiohttp.ClientError:
+                        return {}
                 return async_thread.wait(_handle())
         app.window.webview.rpcproxy = RPCProxy()
         app.window.webview.channel = QtWebChannel.QWebChannel(app.window.webview)

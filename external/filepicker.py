@@ -105,7 +105,8 @@ class FilePicker:
                 items.sort(key=lambda item: item.name.lower())  # Sort alphabetically
                 items.sort(key=lambda item: item.is_dir(), reverse=True)  # Sort dirs first
                 for item in items:
-                    self.items.append((dir_icon if item.is_dir() else file_icon) + item.name)
+                    is_app_bundle = sys.platform.startswith("darwin") and item.is_dir() and item.suffix == ".app"
+                    self.items.append((dir_icon if (item.is_dir() and not is_app_bundle) else file_icon) + item.name)
             else:
                 self.items.append("No items match your filter!" if self.filter_box_text else "This folder is empty!")
         except Exception:
